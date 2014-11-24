@@ -1,24 +1,8 @@
 #include <stdio.h>
 #include <stdlib.h>
+#include "mapread.h"
 
-#define LMU_BLOCK_TYPE_END_MARKER    0x00
-#define LMU_BLOCK_TYPE_CHIPSET       0x01
-#define LMU_BLOCK_TYPE_WIDTH         0x02
-#define LMU_BLOCK_TYPE_HEIGHT        0x03
-#define LMU_BLOCK_TYPE_LOWER_LAYER   0x47
-#define LMU_BLOCK_TYPE_UPPER_LAYER   0x48
-#define LMU_MAP_DATA_DEFAULT_CHIPSET 0x1
-#define LMU_MAP_DATA_DEFAULT_WIDTH   0x30
-#define LMU_MAP_DATA_DEFAULT_HEIGHT  0x15
-
-
-typedef unsigned short int MapTile;
-typedef struct map_data {
-	int chipset, width, height;
-	MapTile *upper, *lower;
-} MapData;
-
-long int read_varint(FILE *in) {
+long int lmu_read_varint(FILE *in) {
   long int res;
   int byte;
   
@@ -38,47 +22,47 @@ long int read_varint(FILE *in) {
   return res;
 }
 
-int skip_header(FILE *in) {
+int lmu_skip_header(FILE *in) {
   int size;
   
-  size = read_varint(in);
+  size = lmu_read_varint(in);
   /* TODO: check for LcfMapUnit */
   fseek(in, size, SEEK_CUR);
 }
 
-int load_map_tiles(MapData *map_data, FILE *in, int is_upper) {
-  MapTile **layer;
+int lmu_load_map_tiles(LmuMapData *map_data, FILE *in, int is_upper) {
+  LmuMapTile **layer;
   
   layer = is_upper ? &map_data->upper : &map_data->lower;
   
   if (*layer == NULL) {
-    *layer = calloc(map_data->width * map_data->height, sizeof(MapTile));
-    fread(*layer, sizeof(MapTile), map_data->width * map_data->height, in);
+    *layer = calloc(map_data->width * map_data->height, sizeof(LmuMapTile));
+    fread(*layer, sizeof(LmuMapTile), map_data->width * map_data->height, in);
   }
 }
 
 /* returns the type of the processed block */
-int process_block(MapData *map_data, FILE *in) {
+int lmu_process_block(LmuMapData *map_data, FILE *in) {
   int block_type, block_size, content_int;
   
-  block_type = read_varint(in);
+  block_type = lmu_read_varint(in);
   if (block_type == LMU_BLOCK_TYPE_END_MARKER) {
     return 0;
   }
 
-  block_size = read_varint(in);
+  block_size = lmu_read_varint(in);
   if (LMU_BLOCK_TYPE_CHIPSET == block_type) {
-    map_data->chipset = read_varint(in);
+    map_data->chipset = lmu_read_varint(in);
   }
   else if (LMU_BLOCK_TYPE_WIDTH == block_type) {
-    map_data->width = read_varint(in);
+    map_data->width = lmu_read_varint(in);
   }
   else if (LMU_BLOCK_TYPE_HEIGHT == block_type) {
-    map_data->height = read_varint(in);
+    map_data->height = lmu_read_varint(in);
   }
   else if (LMU_BLOCK_TYPE_UPPER_LAYER == block_type
            || LMU_BLOCK_TYPE_LOWER_LAYER == block_type) {
-    load_map_tiles(map_data, in, LMU_BLOCK_TYPE_UPPER_LAYER == block_type);
+    lmu_load_map_tiles(map_data, in, LMU_BLOCK_TYPE_UPPER_LAYER == block_type);
   }
   else {
     /* Skip unknown block */
@@ -88,7 +72,7 @@ int process_block(MapData *map_data, FILE *in) {
   return block_type;
 }
 
-void process_file(MapData *map_data, const char *filename) {
+void lmu_process_file(LmuMapData *map_data, const char *filename) {
   FILE *in;
   int block_type;
   
@@ -100,10 +84,10 @@ void process_file(MapData *map_data, const char *filename) {
   map_data->lower = NULL;
   
   in = fopen(filename, "r");
-  skip_header(in);
+  lmu_skip_header(in);
   
   while (!feof(in)) {
-    block_type = process_block(map_data, in);
+    block_type = lmu_process_block(map_data, in);
     
     if (LMU_BLOCK_TYPE_END_MARKER == block_type) {
       break;
@@ -114,35 +98,10 @@ void process_file(MapData *map_data, const char *filename) {
 }
 
 /* This function frees map layers */
-void clean_map_data(MapData *md) {
+void lmu_clean_map_data(LmuMapData *md) {
   free(md->upper);
   md->upper = NULL;
   free(md->lower);
   md->lower = NULL;
 }
 
-int main(int argc, char *argv[]) {
-  MapData map_data;
-  int x, y;
- 
-  if (2 != argc) {
-    printf("Usage: %s mapfile\n", argv[0]);
-  }
-  else {
-    printf("Reading %s\n", argv[1]);
-    process_file(&map_data, argv[1]);
-   
-    /* Example of using the loaded data: draw first 5x5 tiles */
-    for (y = 0; y < 5; y++) {
-      for (x = 0; x < 5; x++) {
-        printf("(%02d,%02d): %05d ",
-               x, y,
-               map_data.lower[y * map_data.width + x]);
-      }
-      printf("\n");
-    }
-    
-    /* Cleanup */
-    clean_map_data(&map_data);
-  }
-}
